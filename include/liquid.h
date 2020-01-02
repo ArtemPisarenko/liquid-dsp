@@ -7731,6 +7731,14 @@ void NCO(_set_phase)(NCO() _q,                                              \
 void NCO(_adjust_phase)(NCO() _q,                                           \
                         T     _dphi);                                       \
                                                                             \
+/* Set frequency of nco object as fraction of sample rate (n/m)         */  \
+/*  _q      : nco object                                                */  \
+/*  _n      : input multiplier coefficient                              */  \
+/*  _m      : input divider coefficient                                 */  \
+void NCO(_set_precise_frequency)(NCO()        _q,                           \
+                                 int          _n,                           \
+                                 unsigned int _m);                          \
+                                                                            \
 /* Increment phase by internal phase step (frequency)                   */  \
 void NCO(_step)(NCO() _q);                                                  \
                                                                             \
