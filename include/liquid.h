@@ -7669,11 +7669,17 @@ void ofdmframesync_debug_print(ofdmframesync _q, const char * _filename);
 //
 
 // oscillator type
-//  LIQUID_NCO  :   numerically-controlled oscillator (fast)
-//  LIQUID_VCO  :   "voltage"-controlled oscillator (precise)
+//  LIQUID_NCO  :   numerically-controlled oscillator (fastest in all aspects)
+//  LIQUID_VCO* :   "voltage"-controlled oscillator (precise)
+//  (LIQUID_VCO_DIRECT is fast at computing output but having separate limited API,
+//   and each time frequency being set it does dynamic (re-)allocating and
+//   calculating of lookup table with resulting memory size and speed slowdown
+//   proportional to divider coefficient value)
 typedef enum {
     LIQUID_NCO=0,
-    LIQUID_VCO
+    LIQUID_VCO,
+    LIQUID_VCO_INTERP=LIQUID_VCO,
+    LIQUID_VCO_DIRECT
 } liquid_ncotype;
 
 #define LIQUID_NCO_MANGLE_FLOAT(name) LIQUID_CONCAT(nco_crcf, name)
@@ -7688,7 +7694,7 @@ typedef enum {
 typedef struct NCO(_s) * NCO();                                             \
                                                                             \
 /* Create nco object with either fixed-point or floating-point phase    */  \
-/*  _type   : oscillator type, _type in {LIQUID_NCO, LIQUID_VCO}        */  \
+/*  _type   : oscillator type                                           */  \
 NCO() NCO(_create)(liquid_ncotype _type);                                   \
                                                                             \
 /* Destroy nco object, freeing all internally allocated memory          */  \
@@ -7735,17 +7741,17 @@ void NCO(_adjust_phase)(NCO() _q,                                           \
 /*  _q      : nco object                                                */  \
 /*  _n      : pointer to output multiplier coefficient (normalized)     */  \
 /*  _m      : pointer to output divider coefficient (normalized)        */  \
-void NCO(_get_precise_frequency)(NCO()         _q,                          \
-                                 int*          _n,                          \
-                                 unsigned int* _m);                         \
+void NCO(_get_vcodirect_frequency)(NCO()         _q,                        \
+                                   int*          _n,                        \
+                                   unsigned int* _m);                       \
                                                                             \
 /* Set frequency of nco object as fraction of sample rate (n/m)         */  \
 /*  _q      : nco object                                                */  \
 /*  _n      : input multiplier coefficient                              */  \
 /*  _m      : input divider coefficient                                 */  \
-void NCO(_set_precise_frequency)(NCO()        _q,                           \
-                                 int          _n,                           \
-                                 unsigned int _m);                          \
+void NCO(_set_vcodirect_frequency)(NCO()        _q,                         \
+                                   int          _n,                         \
+                                   unsigned int _m);                        \
                                                                             \
 /* Increment phase by internal phase step (frequency)                   */  \
 void NCO(_step)(NCO() _q);                                                  \
