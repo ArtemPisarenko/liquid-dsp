@@ -7731,6 +7731,14 @@ void NCO(_set_phase)(NCO() _q,                                              \
 void NCO(_adjust_phase)(NCO() _q,                                           \
                         T     _dphi);                                       \
                                                                             \
+/* Get frequency of nco object as fraction of sample rate (n/m)         */  \
+/*  _q      : nco object                                                */  \
+/*  _n      : pointer to output multiplier coefficient (normalized)     */  \
+/*  _m      : pointer to output divider coefficient (normalized)        */  \
+void NCO(_get_precise_frequency)(NCO()         _q,                          \
+                                 int*          _n,                          \
+                                 unsigned int* _m);                         \
+                                                                            \
 /* Set frequency of nco object as fraction of sample rate (n/m)         */  \
 /*  _q      : nco object                                                */  \
 /*  _n      : input multiplier coefficient                              */  \

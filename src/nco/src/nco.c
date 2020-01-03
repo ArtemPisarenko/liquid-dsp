@@ -46,10 +46,11 @@ struct NCO(_s) {
     uint32_t        d_theta;        // 32-bit frequency [radians/sample]
 
     // type == LIQUID_VCO
-    uint32_t        vco_size;      // size of look-up tables
+    int             vco_n;         // normalized multiplier coefficient
+    unsigned int    vco_m;         // normalized divider coefficient
     T*              vco_sintab;    // sine direct look-up table
     T*              vco_costab;    // cosine direct look-up table
-    uint32_t        vco_index;     // direct look-up index [0, size]
+    unsigned int    vco_index;     // direct look-up index [0, m)
 
     // phase-locked loop
     T               alpha;          // frequency proportion
@@ -63,6 +64,8 @@ static const T TWO_TO_THE_32_MINUS_1 = 4294967295.0;
 uint32_t NCO(_constrain)(float _theta);
 
 void NCO(_constrain_precise)(int *_n, unsigned int *_m);
+
+int NCO(_has_precise_lookup_table)(NCO() _q);
 
 void NCO(_calc_precise_lookup_table)(T*                    tab,
                                      unsigned int          size,
@@ -93,7 +96,8 @@ NCO() NCO(_create)(liquid_ncotype _type)
         q->nco_sintab = NULL;
     }
 
-    q->vco_size   = 0;
+    q->vco_n      = 0;
+    q->vco_m      = 0;
     q->vco_sintab = NULL;
     q->vco_costab = NULL;
 
@@ -114,7 +118,7 @@ void NCO(_destroy)(NCO() _q)
 
     if (_q->type == LIQUID_NCO)
         free(_q->nco_sintab);
-    if (_q->vco_size != 0) {
+    if (NCO(_has_precise_lookup_table)(_q)) {
         free(_q->vco_sintab);
         free(_q->vco_costab);
     }
@@ -129,8 +133,8 @@ void NCO(_print)(NCO() _q)
         printf("nco [type: NCO, phase: 0x%.8x rad, freq: 0x%.8x rad/sample]\n",
                 _q->theta, _q->d_theta);
     } else if (_q->type == LIQUID_VCO) {
-        printf("nco [type: VCO, m/size: 0x%.8x, phase index: 0x%.8x]\n",
-                _q->vco_size, _q->vco_index);
+        printf("nco [type: VCO, n: %11i, m: %10u, phase index: %10u]\n",
+                _q->vco_n, _q->vco_m, _q->vco_index);
     } else {
         printf("nco [type: <INVALID>]\n");
     }
@@ -140,8 +144,8 @@ void NCO(_print)(NCO() _q)
     if (_q->type == LIQUID_NCO) {
         for (i=0; i<1024; i++)
             printf("  sintab[%4u] = %16.12f\n", i, _q->nco_sintab[i]);
-    } else if (_q->type == LIQUID_VCO) {
-        for (i=0; i<_q->vco_size; i++)
+    } else if ((_q->type == LIQUID_VCO) && NCO(_has_precise_lookup_table)(_q)) {
+        for (i=0; i<_q->vco_m; i++)
             printf("  %10u  sintab[i] = %16.12f  costab[i] = %16.12f\n",
                    i, _q->vco_sintab[i], _q->vco_costab[i]);
     }
@@ -155,13 +159,14 @@ void NCO(_reset)(NCO() _q)
     _q->theta   = 0;
     _q->d_theta = 0;
 
-    if (_q->vco_size != 0) {
-        _q->vco_size = 0;
+    if (NCO(_has_precise_lookup_table)(_q)) {
         free(_q->vco_sintab);
         _q->vco_sintab = NULL;
         free(_q->vco_costab);
         _q->vco_costab = NULL;
     }
+    _q->vco_n     = 0;
+    _q->vco_m     = 0;
     _q->vco_index = 0;
 
     // reset pll filter state
@@ -217,9 +222,9 @@ void NCO(_step)(NCO() _q)
 {
     if (_q->type == LIQUID_NCO) {
         _q->theta += _q->d_theta;
-    } else if ((_q->type == LIQUID_VCO) && (_q->vco_size != 0)) {
+    } else if ((_q->type == LIQUID_VCO) && NCO(_has_precise_lookup_table)(_q)) {
         (_q->vco_index)++;
-        if (_q->vco_index == _q->vco_size)
+        if (_q->vco_index == _q->vco_m)
             _q->vco_index = 0;
     }
 }
@@ -245,6 +250,18 @@ T NCO(_get_frequency)(NCO() _q)
     return d_theta > M_PI ? d_theta - 2*M_PI : d_theta;
 }
 
+void NCO(_get_precise_frequency)(NCO()         _q,
+                                 int*          _n,
+                                 unsigned int* _m)
+{
+    if (_q->type != LIQUID_VCO) {
+        fprintf(stderr,"error: nco_get_precise_frequency(), cannot be used with object type != LIQUID_VCO\n");
+        exit(1);
+    }
+    *_n = _q->vco_n;
+    *_m = _q->vco_m;
+}
+
 void NCO(_set_precise_frequency)(NCO()        _q,
                                  int          _n,
                                  unsigned int _m)
@@ -254,31 +271,30 @@ void NCO(_set_precise_frequency)(NCO()        _q,
         exit(1);
     }
 
-    if (_q->vco_size != 0) {
+    if (NCO(_has_precise_lookup_table)(_q)) {
         free(_q->vco_sintab);
         free(_q->vco_costab);
     }
 
-    if (_m > 0)
-        NCO(_constrain_precise)(&_n, &_m);
-
+    _q->vco_n     = _n;
+    _q->vco_m     = _m;
     _q->vco_index = 0;
 
-    if ((_n != 0) && (_m > 0)) {
-        _q->vco_size   = _m;
-        _q->vco_sintab = (T*)malloc(_m*sizeof(T));
-        _q->vco_costab = (T*)malloc(_m*sizeof(T));
-        const int32_t d_theta = (int32_t)((T)TWO_TO_THE_31 * ( 2.0 * (T)(_n) / (T)(_m)));
+    NCO(_constrain_precise)(&(_q->vco_n), &(_q->vco_m));
+
+    if (NCO(_has_precise_lookup_table)(_q)) {
+        _q->vco_sintab = (T*)malloc(_q->vco_m*sizeof(T));
+        _q->vco_costab = (T*)malloc(_q->vco_m*sizeof(T));
+        const int32_t d_theta = (int32_t)((T)TWO_TO_THE_31 * ( 2.0 * (T)(_q->vco_n) / (T)(_q->vco_m)));
         T scale_factor = 1.0;
-        NCO(_calc_precise_lookup_table)(_q->vco_sintab, _m, d_theta, &scale_factor, NCO(_fp_sin));
-        NCO(_calc_precise_lookup_table)(_q->vco_costab, _m, d_theta, &scale_factor, NCO(_fp_cos));
+        NCO(_calc_precise_lookup_table)(_q->vco_sintab, _q->vco_m, d_theta, &scale_factor, NCO(_fp_sin));
+        NCO(_calc_precise_lookup_table)(_q->vco_costab, _q->vco_m, d_theta, &scale_factor, NCO(_fp_cos));
         unsigned int i;
-        for (i=0; i<_m; i++) {
+        for (i=0; i<_q->vco_m; i++) {
             _q->vco_sintab[i] /= scale_factor;
             _q->vco_costab[i] /= scale_factor;
         }
     } else {
-        _q->vco_size  = 0;
         _q->vco_sintab = NULL;
         _q->vco_costab = NULL;
     }
@@ -291,7 +307,7 @@ T NCO(_sin)(NCO() _q)
     if (_q->type == LIQUID_NCO) {
         unsigned int index = NCO(_index)(_q);
         value = _q->nco_sintab[index];
-    } else if ((_q->type == LIQUID_VCO) && (_q->vco_size != 0)) {
+    } else if ((_q->type == LIQUID_VCO) && NCO(_has_precise_lookup_table)(_q)) {
         value = _q->vco_sintab[_q->vco_index];
     }
     return value;
@@ -304,7 +320,7 @@ T NCO(_cos)(NCO() _q)
         // add pi/2 phase shift
         unsigned int index = (NCO(_index)(_q) + 256) & 0x3ff;
         value = _q->nco_sintab[index];
-    } else if ((_q->type == LIQUID_VCO) && (_q->vco_size != 0)) {
+    } else if ((_q->type == LIQUID_VCO) && NCO(_has_precise_lookup_table)(_q)) {
         value = _q->vco_costab[_q->vco_index];
     }
     return value;
@@ -321,7 +337,7 @@ void NCO(_sincos)(NCO() _q,
     if (_q->type == LIQUID_NCO) {
         *_s = _q->nco_sintab[(index    )        ];
         *_c = _q->nco_sintab[(index+256) & 0x3ff];
-    } else if ((_q->type == LIQUID_VCO) && (_q->vco_size != 0)) {
+    } else if ((_q->type == LIQUID_VCO) && NCO(_has_precise_lookup_table)(_q)) {
         *_s = _q->vco_sintab[index];
         *_c = _q->vco_costab[index];
     } else {
@@ -513,6 +529,9 @@ uint32_t NCO(_constrain)(float _theta)
 
 void NCO(_constrain_precise)(int *_n, unsigned int *_m)
 {
+    if ((*_m) == 0)
+        return;
+
     /* fold 'n' into [-'m'/2, 'm'/2) range */
     *_n %= (int)(*_m);
     if ((T)(abs(*_n)) >= (T)(*_m)/2.0) {
@@ -531,6 +550,11 @@ void NCO(_constrain_precise)(int *_n, unsigned int *_m)
         *_n >>= 1;
         *_m >>= 1;
     }
+}
+
+int NCO(_has_precise_lookup_table)(NCO() _q)
+{
+    return ((_q->vco_n != 0) && (_q->vco_m > 0));
 }
 
 void NCO(_calc_precise_lookup_table)(T*                    tab,
@@ -574,7 +598,7 @@ unsigned int NCO(_index)(NCO() _q)
     if (_q->type == LIQUID_NCO) {
         //return (_q->theta >> 22) & 0x3ff; // round down
         value = ((_q->theta + (1<<21)) >> 22) & 0x3ff; // round appropriately
-    } else if ((_q->type == LIQUID_VCO) && (_q->vco_size != 0)) {
+    } else if ((_q->type == LIQUID_VCO) && NCO(_has_precise_lookup_table)(_q)) {
         value = _q->vco_index;
     }
     return value;
