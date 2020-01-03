@@ -24,6 +24,14 @@
 // Numerically-controlled oscillator (nco) with internal phase-locked
 // loop (pll) implementation
 //
+// Implementation of LIQUID_VCO_* types is based on implementation
+//  of gr::fxpt class from runtime module of "GNU Radio" toolkit.
+// Original authorhip:
+// - https://github.com/gnuradio/gnuradio/blob/f7bbf2c1d8d780294f3e016aff239ca35eb6516e/gnuradio-runtime/include/gnuradio/fxpt.h
+// - https://github.com/gnuradio/gnuradio/blob/f7bbf2c1d8d780294f3e016aff239ca35eb6516e/gnuradio-runtime/lib/math/fxpt.cc
+// - https://github.com/gnuradio/gnuradio/blob/f7bbf2c1d8d780294f3e016aff239ca35eb6516e/gnuradio-runtime/lib/math/gen_sine_table.py
+// GNU Radio is free & open-source software: https://www.gnuradio.org .
+//
 
 #include <math.h>
 #include <stdlib.h>
