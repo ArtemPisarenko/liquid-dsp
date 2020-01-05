@@ -91,7 +91,6 @@ uint32_t NCO(_constrain)(T _theta);
 
 /* utilities used with type LIQUID_VCO_DIRECT */
 void NCO(_constrain_vcod)(int *_n, unsigned int *_m);
-inline int NCO(_has_vcod_lookup_table)(NCO() _q);
 void NCO(_calc_vcod_lookup_table)(T*                    tab,
                                   unsigned int          size,
                                   int32_t               d_theta,
@@ -107,7 +106,7 @@ T NCO(_fp_sin)(T x);
 T NCO(_fp_cos)(T x);
 
 // compute index for sine/cosine look-up table
-unsigned int NCO(_index)(NCO() _q);
+unsigned int NCO(_static_index)(NCO() _q);
 
 // create nco/vco object
 NCO() NCO(_create)(liquid_ncotype _type)
@@ -156,9 +155,6 @@ NCO() NCO(_create)(liquid_ncotype _type)
         exit(1);
     }
 
-    q->vcod_n = 0;
-    q->vcod_m = 0;
-
     // set default pll bandwidth
     NCO(_pll_set_bandwidth)(q, NCO_PLL_BANDWIDTH_DEFAULT);
 
@@ -182,10 +178,8 @@ void NCO(_destroy)(NCO() _q)
         free(_q->vcoi_sintab);
         break;
     case LIQUID_VCO_DIRECT:
-        if (NCO(_has_vcod_lookup_table)(_q)) {
-            free(_q->vcod_sintab);
-            free(_q->vcod_costab);
-        }
+        free(_q->vcod_sintab);
+        free(_q->vcod_costab);
         break;
     default:
         break;
@@ -221,8 +215,6 @@ void NCO(_print)(NCO() _q)
                    i, _q->vcoi_sintab[i].m2, _q->vcoi_sintab[i].c);
         break;
     case LIQUID_VCO_DIRECT:
-        if (!NCO(_has_vcod_lookup_table)(_q))
-            break;
         for (i=0; i<_q->vcod_m; i++)
             printf("  [%10u]  sintab[] = %16.12f  costab[] = %16.12f\n",
                    i, _q->vcod_sintab[i], _q->vcod_costab[i]);
@@ -244,16 +236,7 @@ void NCO(_reset)(NCO() _q)
         _q->d_theta = 0;
         break;
     case LIQUID_VCO_DIRECT:
-        // destroy table (if any) and reset all parameters
-        if (NCO(_has_vcod_lookup_table)(_q)) {
-            free(_q->vcod_sintab);
-            _q->vcod_sintab = NULL;
-            free(_q->vcod_costab);
-            _q->vcod_costab = NULL;
-        }
-        _q->vcod_n     = 0;
-        _q->vcod_m     = 0;
-        _q->vcod_index = 0;
+        NCO(_set_vcodirect_frequency)(_q, 0, 0);
         break;
     default:
         break;
@@ -316,7 +299,7 @@ void NCO(_step)(NCO() _q)
 {
     if ((_q->type == LIQUID_NCO) || (_q->type == LIQUID_VCO_INTERP)) {
         _q->theta += _q->d_theta;
-    } else if ((_q->type == LIQUID_VCO_DIRECT) && NCO(_has_vcod_lookup_table)(_q)) {
+    } else if (_q->type == LIQUID_VCO_DIRECT) {
         (_q->vcod_index)++;
         if (_q->vcod_index == _q->vcod_m)
             _q->vcod_index = 0;
@@ -373,18 +356,18 @@ void NCO(_set_vcodirect_frequency)(NCO()        _q,
         exit(1);
     }
 
-    if (NCO(_has_vcod_lookup_table)(_q)) {
+    if (_q->vcod_sintab)
         free(_q->vcod_sintab);
+    if (_q->vcod_costab)
         free(_q->vcod_costab);
-    }
 
-    _q->vcod_n     = _n;
-    _q->vcod_m     = _m;
     _q->vcod_index = 0;
 
-    NCO(_constrain_vcod)(&(_q->vcod_n), &(_q->vcod_m));
+    NCO(_constrain_vcod)(&_n, &_m);
 
-    if (NCO(_has_vcod_lookup_table)(_q)) {
+    if ((_n != 0) && (_m > 0)) {
+        _q->vcod_n = _n;
+        _q->vcod_m = _m;
         _q->vcod_sintab = (T*)malloc(_q->vcod_m*sizeof(T));
         _q->vcod_costab = (T*)malloc(_q->vcod_m*sizeof(T));
         const int32_t d_theta = (int32_t)((double)TWO_TO_THE_31 * 2.0
@@ -400,35 +383,29 @@ void NCO(_set_vcodirect_frequency)(NCO()        _q,
             _q->vcod_costab[i] /= scale_factor;
         }
     } else {
-        _q->vcod_sintab = NULL;
-        _q->vcod_costab = NULL;
+        _q->vcod_n = 0;
+        _q->vcod_m = 1;
+        _q->vcod_sintab = (T*)malloc(sizeof(T));
+        _q->vcod_costab = (T*)malloc(sizeof(T));
+        _q->vcod_sintab[0] = TIL(0);
+        _q->vcod_costab[0] = TIL(1);
     }
 }
 
 // compute sine, cosine internally
 T NCO(_sin)(NCO() _q)
 {
-    unsigned int index = NCO(_index)(_q);
     T value = TIL(0);
 
-    switch (_q->type) {
-    case LIQUID_NCO: {
-        value = _q->nco_sintab[index];
-        break;
-    }
-    case LIQUID_VCO_INTERP: {
-        value = _q->vcoi_sintab[index].m2 * (_q->theta >> 1)
-                + _q->vcoi_sintab[index].c;
-        break;
-    }
-    case LIQUID_VCO_DIRECT: {
-        if (!NCO(_has_vcod_lookup_table)(_q))
-            break;
-        value = _q->vcod_sintab[index];
-        break;
-    }
-    default:
-        break;
+    if ((_q->type == LIQUID_NCO) || (_q->type == LIQUID_VCO_INTERP)) {
+        unsigned int index = NCO(_static_index)(_q);
+        if (_q->type == LIQUID_NCO)
+            value = _q->nco_sintab[index];
+        else
+            value = _q->vcoi_sintab[index].m2 * (_q->theta >> 1)
+                    + _q->vcoi_sintab[index].c;
+    } else if (_q->type == LIQUID_VCO_DIRECT) {
+        value = _q->vcod_sintab[_q->vcod_index];
     }
 
     return value;
@@ -436,12 +413,10 @@ T NCO(_sin)(NCO() _q)
 
 T NCO(_cos)(NCO() _q)
 {
-    unsigned int index = NCO(_index)(_q);
     T value = TIL(1);
 
-    switch (_q->type) {
-    case LIQUID_NCO:
-    case LIQUID_VCO_INTERP: {
+    if ((_q->type == LIQUID_NCO) || (_q->type == LIQUID_VCO_INTERP)) {
+        unsigned int index = NCO(_static_index)(_q);
         /* add pi/2 phase shift */
         index = NCO_STATIC_LUT_INDEX_SHIFTED_PI2(index);
         if (_q->type == LIQUID_NCO) {
@@ -451,16 +426,8 @@ T NCO(_cos)(NCO() _q)
             value = _q->vcoi_sintab[index].m2 * (theta >> 1)
                     + _q->vcoi_sintab[index].c;
         }
-        break;
-    }
-    case LIQUID_VCO_DIRECT: {
-        if (!NCO(_has_vcod_lookup_table)(_q))
-            break;
-        value = _q->vcod_costab[index];
-        break;
-    }
-    default:
-        break;
+    } else if (_q->type == LIQUID_VCO_DIRECT) {
+        value = _q->vcod_costab[_q->vcod_index];
     }
 
     return value;
@@ -471,12 +438,8 @@ void NCO(_sincos)(NCO() _q,
                   T *   _s,
                   T *   _c)
 {
-    unsigned int index = NCO(_index)(_q);
-
-    // return result
-    switch (_q->type) {
-    case LIQUID_NCO:
-    case LIQUID_VCO_INTERP: {
+    if ((_q->type == LIQUID_NCO) || (_q->type == LIQUID_VCO_INTERP)) {
+        unsigned int index = NCO(_static_index)(_q);
         unsigned int shifted_index = NCO_STATIC_LUT_INDEX_SHIFTED_PI2(index);
         if (_q->type == LIQUID_NCO) {
             *_s = _q->nco_sintab[index];
@@ -488,20 +451,12 @@ void NCO(_sincos)(NCO() _q,
             *_c = _q->vcoi_sintab[shifted_index].m2 * (shifted_theta >> 1)
                   + _q->vcoi_sintab[shifted_index].c;
         }
-        break;
-    }
-    case LIQUID_VCO_DIRECT: {
-        if (NCO(_has_vcod_lookup_table)(_q)) {
-            *_s = _q->vcod_sintab[index];
-            *_c = _q->vcod_costab[index];
-            break;
-        }
-        /* no break */
-    }
-    default:
+    } else if (_q->type == LIQUID_VCO_DIRECT) {
+        *_s = _q->vcod_sintab[_q->vcod_index];
+        *_c = _q->vcod_costab[_q->vcod_index];
+    } else {
         *_s = TIL(0);
         *_c = TIL(1);
-        break;
     }
 }
 
@@ -713,11 +668,6 @@ void NCO(_constrain_vcod)(int *_n, unsigned int *_m)
     }
 }
 
-inline int NCO(_has_vcod_lookup_table)(NCO() _q)
-{
-    return ((_q->vcod_n != 0) && (_q->vcod_m > 0));
-}
-
 void NCO(_calc_vcod_lookup_table)(T*                    tab,
                                   unsigned int          size,
                                   int32_t               d_theta,
@@ -759,15 +709,14 @@ T NCO(_fp_cos)(T x)
     return COS(x * TFL(M_PI) / TWO_TO_THE_31);
 }
 
-unsigned int NCO(_index)(NCO() _q)
+unsigned int NCO(_static_index)(NCO() _q)
 {
     /* TODO: LIQUID_NCO and LIQUID_VCO_INTERP are expected to share same code.
      *       But "appropriate" rounding for LIQUID_VCO_INTERP type causes
      *       phase breaks at some wrap points.
      *       Not sure, so just keep it for type it originated from...
      */
-    switch (_q->type) {
-    case LIQUID_NCO:
+    if (_q->type == LIQUID_NCO) {
         //round down
         //return (_q->theta >> (NCO_STATIC_LUT_WORDBITS-NCO_STATIC_LUT_NBITS))
         //        & (NCO_STATIC_LUT_SIZE - 1);
@@ -775,13 +724,9 @@ unsigned int NCO(_index)(NCO() _q)
         return ((_q->theta + (1<<(NCO_STATIC_LUT_WORDBITS-NCO_STATIC_LUT_NBITS-1)))
                  >> (NCO_STATIC_LUT_WORDBITS-NCO_STATIC_LUT_NBITS))
                 & (NCO_STATIC_LUT_SIZE-1);
-    case LIQUID_VCO_INTERP:
+    } else {
         return (_q->theta >> (NCO_STATIC_LUT_WORDBITS-NCO_STATIC_LUT_NBITS))
                 & (NCO_STATIC_LUT_SIZE-1);
-    case LIQUID_VCO_DIRECT:
-        return _q->vcod_index;
-    default:
-        return 0;
     }
 }
 
