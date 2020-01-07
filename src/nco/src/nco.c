@@ -363,10 +363,8 @@ void NCO(_set_vcodirect_frequency)(NCO()        _q,
         exit(1);
     }
 
-    if (_q->vcod_sintab)
-        free(_q->vcod_sintab);
-    if (_q->vcod_costab)
-        free(_q->vcod_costab);
+    free(_q->vcod_sintab);
+    free(_q->vcod_costab);
 
     _q->vcod_index = 0;
 
