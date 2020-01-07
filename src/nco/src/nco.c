@@ -24,14 +24,6 @@
 // Numerically-controlled oscillator (nco) with internal phase-locked
 // loop (pll) implementation
 //
-// Implementation of LIQUID_VCO_* types is based on implementation
-//  of gr::fxpt class from runtime module of "GNU Radio" toolkit.
-// Original authorhip:
-// - https://github.com/gnuradio/gnuradio/blob/f7bbf2c1d8d780294f3e016aff239ca35eb6516e/gnuradio-runtime/include/gnuradio/fxpt.h
-// - https://github.com/gnuradio/gnuradio/blob/f7bbf2c1d8d780294f3e016aff239ca35eb6516e/gnuradio-runtime/lib/math/fxpt.cc
-// - https://github.com/gnuradio/gnuradio/blob/f7bbf2c1d8d780294f3e016aff239ca35eb6516e/gnuradio-runtime/lib/math/gen_sine_table.py
-// GNU Radio is free & open-source software: https://www.gnuradio.org .
-//
 
 #include <math.h>
 #include <stdlib.h>
@@ -41,20 +33,22 @@
 #define NCO_STATIC_LUT_WORDBITS     32
 #define NCO_STATIC_LUT_NBITS        10
 #define NCO_STATIC_LUT_SIZE         (1LLU << NCO_STATIC_LUT_NBITS)
+#define NCO_STATIC_LUT_HSIZE        (NCO_STATIC_LUT_SIZE >> 1)
+#define NCO_STATIC_LUT_QSIZE        (NCO_STATIC_LUT_SIZE >> 2)
 #define NCO_STATIC_LUT_INDEX_SHIFTED_PI2(index) \
-    (((index) + (NCO_STATIC_LUT_SIZE >> 2)) & (NCO_STATIC_LUT_SIZE - 1))
+    (((index) + NCO_STATIC_LUT_QSIZE) & (NCO_STATIC_LUT_SIZE-1))
 #define NCO_STATIC_LUT_THETA_SHIFTED_PI2(theta) \
     ((theta) + (1LLU << (NCO_STATIC_LUT_WORDBITS - 2)))
+#define NCO_STATIC_LUT_THETA_ACCUM(theta) \
+    ((uint32_t)(theta & ((1LLU << (NCO_STATIC_LUT_WORDBITS-NCO_STATIC_LUT_NBITS))-1)))
 
 #define NCO_PLL_BANDWIDTH_DEFAULT   (0.1)
 #define NCO_PLL_GAIN_DEFAULT        (1000)
 
 #define LIQUID_DEBUG_NCO            (0)
 
-typedef T (*fp_trigonometric_func)(T);
-
 struct vco_tab_e_s {
-    T m2,c;
+    T value, skew;
 };
 typedef struct vco_tab_e_s vco_tab_e;
 
@@ -66,7 +60,7 @@ struct NCO(_s) {
     uint32_t        d_theta;        // 32-bit frequency [radians/sample]
 
     // type == LIQUID_NCO
-    T*              nco_sintab;     // sine direct look-up table
+    T*              nco_sintab;     // sine look-up table
 
     // type == LIQUID_VCO_INTERP
     vco_tab_e*      vcoi_sintab;    // sine interpolated look-up table
@@ -83,25 +77,13 @@ struct NCO(_s) {
     T               beta;           // phase proportion
 };
 
-static const T TWO_TO_THE_31         = TIL(2147483648);
-static const T TWO_TO_THE_32_MINUS_1 = TIL(4294967295);
-
 /* constrain phase (or frequency) and convert to fixed-point */
 uint32_t NCO(_constrain)(T _theta);
 
 /* utilities used with type LIQUID_VCO_DIRECT */
 void NCO(_constrain_vcod)(int *_n, unsigned int *_m);
-void NCO(_calc_vcod_lookup_table)(T*                    tab,
-                                  unsigned int          size,
-                                  int32_t               d_theta,
-                                  T*                    scale_factor,
-                                  fp_trigonometric_func f);
 
 /* utilities used with types LIQUID_VCO_* */
-void NCO(_calc_vco_tab_e)(vco_tab_e*            e,
-                          uint32_t              theta,
-                          int32_t               d_theta,
-                          fp_trigonometric_func f);
 T NCO(_fp_sin)(T x);
 T NCO(_fp_cos)(T x);
 
@@ -131,16 +113,41 @@ NCO() NCO(_create)(liquid_ncotype _type)
         q->vcod_sintab = NULL;
         q->vcod_costab = NULL;
         q->vcoi_sintab = (vco_tab_e*)malloc(NCO_STATIC_LUT_SIZE*sizeof(vco_tab_e));
+        /* Calculate only [0, PI/2] range and mirror it to [PI, 3*PI/2] range
+         * (in single forward iteration, i.e. "sine" direction)
+         */
         uint32_t theta = 0;
-        const int32_t d_theta = (uint32_t)INT32_MAX*2/NCO_STATIC_LUT_SIZE;
+        const int32_t d_theta = (uint32_t)(UINT32_MAX)/NCO_STATIC_LUT_SIZE;
         unsigned int i;
-        for (i=0; i<NCO_STATIC_LUT_SIZE; i++) {
-            NCO(_calc_vco_tab_e)(&(q->vcoi_sintab[i]), theta, d_theta, NCO(_fp_sin));
+        for (i=0; i<NCO_STATIC_LUT_QSIZE; i++) {
+            T value = NCO(_fp_sin)((uint32_t)(theta));
+            T next_value = NCO(_fp_sin)((uint32_t)(theta + d_theta));
+            T skew = (next_value - value) / (T)(d_theta);
+            q->vcoi_sintab[i].value = value;
+            q->vcoi_sintab[i].skew = skew;
+            q->vcoi_sintab[i+NCO_STATIC_LUT_HSIZE].value = -value;
+            q->vcoi_sintab[i+NCO_STATIC_LUT_HSIZE].skew = -skew;
             theta += d_theta;
         }
-        /* TODO: compensate range overflow caused by small undefined error
-         *       ("scale_factor" solution from LIQUID_VCO_DIRECT doesn't fit here)
+        q->vcoi_sintab[NCO_STATIC_LUT_QSIZE].value = TIL(1);
+        q->vcoi_sintab[NCO_STATIC_LUT_QSIZE].skew =
+            - q->vcoi_sintab[NCO_STATIC_LUT_QSIZE-1].skew;
+        q->vcoi_sintab[NCO_STATIC_LUT_QSIZE+NCO_STATIC_LUT_HSIZE].value =
+            - q->vcoi_sintab[NCO_STATIC_LUT_QSIZE].value;
+        q->vcoi_sintab[NCO_STATIC_LUT_QSIZE+NCO_STATIC_LUT_HSIZE].skew =
+              q->vcoi_sintab[NCO_STATIC_LUT_QSIZE-1].skew;
+        /* Mirror [0, PI/2], [PI, 3*PI/2] ranges to [PI/2, PI], [3*PI/2, 2*PI]
+         * (in single backward iteration, i.e. "cosine" direction)
          */
+        for (i=1; i<NCO_STATIC_LUT_QSIZE; i++) {
+            unsigned int i_pi2 = i + NCO_STATIC_LUT_QSIZE;
+            T value = q->vcoi_sintab[NCO_STATIC_LUT_QSIZE - i].value;
+            T skew = q->vcoi_sintab[NCO_STATIC_LUT_QSIZE - i - 1].skew;
+            q->vcoi_sintab[i_pi2].value = value;
+            q->vcoi_sintab[i_pi2].skew = -skew;
+            q->vcoi_sintab[i_pi2 + NCO_STATIC_LUT_HSIZE].value = -value;
+            q->vcoi_sintab[i_pi2 + NCO_STATIC_LUT_HSIZE].skew = skew;
+        }
         break;
     }
     case LIQUID_VCO_DIRECT: {
@@ -211,8 +218,8 @@ void NCO(_print)(NCO() _q)
         break;
     case LIQUID_VCO_INTERP:
         for (i=0; i<NCO_STATIC_LUT_SIZE; i++)
-            printf("  sintab[%4u]  .m2 = %19.15e  .c = %19.15e\n",
-                   i, _q->vcoi_sintab[i].m2, _q->vcoi_sintab[i].c);
+            printf("  sintab[%4u]  .value = %16.12f  .skew = %22.15e\n",
+                   i, _q->vcoi_sintab[i].value, _q->vcoi_sintab[i].skew);
         break;
     case LIQUID_VCO_DIRECT:
         for (i=0; i<_q->vcod_m; i++)
@@ -370,19 +377,38 @@ void NCO(_set_vcodirect_frequency)(NCO()        _q,
         _q->vcod_m = _m;
         _q->vcod_sintab = (T*)malloc(_q->vcod_m*sizeof(T));
         _q->vcod_costab = (T*)malloc(_q->vcod_m*sizeof(T));
-        const int32_t d_theta = (int32_t)((double)TWO_TO_THE_31 * 2.0
+        const int32_t d_theta = (int32_t)((double)(UINT32_MAX)
                                           * (double)(_q->vcod_n)/(double)(_q->vcod_m));
-        T scale_factor = TIL(1);
-        NCO(_calc_vcod_lookup_table)(_q->vcod_sintab, _q->vcod_m,
-                                     d_theta, &scale_factor, NCO(_fp_sin));
-        NCO(_calc_vcod_lookup_table)(_q->vcod_costab, _q->vcod_m,
-                                     d_theta, &scale_factor, NCO(_fp_cos));
+        /* Calculate both sine and cosine values
+         * over 'n' integral periods within 'm' count
+         * constraining theta argument to [0, PI/2) range
+         */
+        static const uint32_t VALUE_PI_2 = (1ULL << 30);
+        static const uint32_t VALUE_PI   = (1ULL << 31);
+        uint32_t theta = 0;
         unsigned int i;
         for (i=0; i<_q->vcod_m; i++) {
-            _q->vcod_sintab[i] /= scale_factor;
-            _q->vcod_costab[i] /= scale_factor;
+            uint32_t theta_pi2 = theta % VALUE_PI_2;
+            T sin_theta_pi2 = NCO(_fp_sin)(theta_pi2);
+            T cos_theta_pi2 = NCO(_fp_cos)(theta_pi2);
+            if ((theta % VALUE_PI) < VALUE_PI_2)
+                _q->vcod_sintab[i] = sin_theta_pi2;
+            else
+                _q->vcod_sintab[i] = cos_theta_pi2;
+            if (theta > VALUE_PI)
+                _q->vcod_sintab[i] *= TIL(-1);
+            if (((theta - VALUE_PI_2) % VALUE_PI) >= VALUE_PI_2)
+                _q->vcod_costab[i] = cos_theta_pi2;
+            else
+                _q->vcod_costab[i] = sin_theta_pi2;
+            if ((theta - VALUE_PI_2) <= VALUE_PI)
+                _q->vcod_costab[i] *= TIL(-1);
+            theta += d_theta;
         }
     } else {
+        /* Use constant single-element sine/cosine table
+         * in order to optimize indexed access
+         */
         _q->vcod_n = 0;
         _q->vcod_m = 1;
         _q->vcod_sintab = (T*)malloc(sizeof(T));
@@ -402,8 +428,8 @@ T NCO(_sin)(NCO() _q)
         if (_q->type == LIQUID_NCO)
             value = _q->nco_sintab[index];
         else
-            value = _q->vcoi_sintab[index].m2 * (_q->theta >> 1)
-                    + _q->vcoi_sintab[index].c;
+            value = _q->vcoi_sintab[index].value +
+                    NCO_STATIC_LUT_THETA_ACCUM(_q->theta) * _q->vcoi_sintab[index].skew;
     } else if (_q->type == LIQUID_VCO_DIRECT) {
         value = _q->vcod_sintab[_q->vcod_index];
     }
@@ -423,8 +449,8 @@ T NCO(_cos)(NCO() _q)
             value = _q->nco_sintab[index];
         } else {
             uint32_t theta = NCO_STATIC_LUT_THETA_SHIFTED_PI2(_q->theta);
-            value = _q->vcoi_sintab[index].m2 * (theta >> 1)
-                    + _q->vcoi_sintab[index].c;
+            value = _q->vcoi_sintab[index].value +
+                    NCO_STATIC_LUT_THETA_ACCUM(theta) * _q->vcoi_sintab[index].skew;
         }
     } else if (_q->type == LIQUID_VCO_DIRECT) {
         value = _q->vcod_costab[_q->vcod_index];
@@ -440,16 +466,16 @@ void NCO(_sincos)(NCO() _q,
 {
     if ((_q->type == LIQUID_NCO) || (_q->type == LIQUID_VCO_INTERP)) {
         unsigned int index = NCO(_static_index)(_q);
-        unsigned int shifted_index = NCO_STATIC_LUT_INDEX_SHIFTED_PI2(index);
+        unsigned int index_pi2 = NCO_STATIC_LUT_INDEX_SHIFTED_PI2(index);
         if (_q->type == LIQUID_NCO) {
             *_s = _q->nco_sintab[index];
-            *_c = _q->nco_sintab[shifted_index];
+            *_c = _q->nco_sintab[index_pi2];
         } else {
-            uint32_t shifted_theta = NCO_STATIC_LUT_THETA_SHIFTED_PI2(_q->theta);
-            *_s = _q->vcoi_sintab[index].m2 * (_q->theta >> 1)
-                  + _q->vcoi_sintab[index].c;
-            *_c = _q->vcoi_sintab[shifted_index].m2 * (shifted_theta >> 1)
-                  + _q->vcoi_sintab[shifted_index].c;
+            uint32_t theta_pi2 = NCO_STATIC_LUT_THETA_SHIFTED_PI2(_q->theta);
+            *_s = _q->vcoi_sintab[index].value +
+                  NCO_STATIC_LUT_THETA_ACCUM(_q->theta) * _q->vcoi_sintab[index].skew;
+            *_c = _q->vcoi_sintab[index_pi2].value +
+                  NCO_STATIC_LUT_THETA_ACCUM(theta_pi2) * _q->vcoi_sintab[index_pi2].skew;
         }
     } else if (_q->type == LIQUID_VCO_DIRECT) {
         *_s = _q->vcod_sintab[_q->vcod_index];
@@ -668,45 +694,14 @@ void NCO(_constrain_vcod)(int *_n, unsigned int *_m)
     }
 }
 
-void NCO(_calc_vcod_lookup_table)(T*                    tab,
-                                  unsigned int          size,
-                                  int32_t               d_theta,
-                                  T*                    scale_factor,
-                                  fp_trigonometric_func f)
-{
-    uint32_t theta = 0;
-    unsigned int i;
-    vco_tab_e e;
-    for (i=0; i<size; i++) {
-        NCO(_calc_vco_tab_e)(&e, theta, d_theta, f);
-
-        tab[i] = e.m2 * (theta >> 1) + e.c;
-        if (FABS(tab[i]) > (*scale_factor))
-            *scale_factor = FABS(tab[i]);
-
-        theta += d_theta;
-    }
-}
-
-void NCO(_calc_vco_tab_e)(vco_tab_e*            e,
-                          uint32_t              theta,
-                          int32_t               d_theta,
-                          fp_trigonometric_func f)
-{
-    const T a = (T)(theta);
-    const T b = (T)((int64_t)(theta) + d_theta);
-    e->m2 = TIL(2) * ((f(b)-f(a)) / (b-a));
-    e->c  = (TIL(3)*a+b)*(f(a)-f(b))/(TIL(4)*(b-a)) + (f((a+b)/TIL(2)) + f(a))/TIL(2);
-}
-
 T NCO(_fp_sin)(T x)
 {
-    return SIN(x * TFL(M_PI) / TWO_TO_THE_31);
+    return SIN(x * TFL(M_PI) / ((uint32_t)(INT32_MAX)+1));
 }
 
 T NCO(_fp_cos)(T x)
 {
-    return COS(x * TFL(M_PI) / TWO_TO_THE_31);
+    return COS(x * TFL(M_PI) / ((uint32_t)(INT32_MAX)+1));
 }
 
 unsigned int NCO(_static_index)(NCO() _q)

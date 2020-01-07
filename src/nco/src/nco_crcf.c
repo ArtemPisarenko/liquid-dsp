@@ -36,6 +36,5 @@
 
 #define SIN         sinf
 #define COS         cosf
-#define FABS        fabsf
 
 #include "nco.c"
