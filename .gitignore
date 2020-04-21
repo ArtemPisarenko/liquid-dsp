@@ -20,6 +20,7 @@ benchmark_include.h
 bench/fftbench
 configure
 config.h
+!/cmake/*/config.h
 config.h.in
 config.h.in~
 config.log

@@ -1,0 +1,248 @@
+cmake_minimum_required(VERSION 3.15)
+project("liquid-dsp" C)
+
+set(srcdir "../src")
+
+set(agc_sources
+  ${srcdir}/agc/src/agc_crcf.c
+  ${srcdir}/agc/src/agc_rrrf.c
+  )
+set(audio_sources
+  ${srcdir}/audio/src/cvsd.c
+  )
+set(buffer_sources
+  ${srcdir}/buffer/src/bufferf.c
+  ${srcdir}/buffer/src/buffercf.c
+  )
+set(channel_sources
+  ${srcdir}/channel/src/channel_cccf.c
+  )
+set(dotprod_sources
+  ${srcdir}/dotprod/src/dotprod_cccf.c
+  ${srcdir}/dotprod/src/dotprod_crcf.c
+  ${srcdir}/dotprod/src/dotprod_rrrf.c
+  ${srcdir}/dotprod/src/sumsq.c
+  )
+set(equalization_sources
+  ${srcdir}/equalization/src/equalizer_cccf.c
+  ${srcdir}/equalization/src/equalizer_rrrf.c
+  )
+set(fec_sources
+  ${srcdir}/fec/src/crc.c
+  ${srcdir}/fec/src/fec.c
+  ${srcdir}/fec/src/fec_conv.c
+  ${srcdir}/fec/src/fec_conv_poly.c
+  ${srcdir}/fec/src/fec_conv_pmatrix.c
+  ${srcdir}/fec/src/fec_conv_punctured.c
+  ${srcdir}/fec/src/fec_golay2412.c
+  ${srcdir}/fec/src/fec_hamming74.c
+  ${srcdir}/fec/src/fec_hamming84.c
+  ${srcdir}/fec/src/fec_hamming128.c
+  ${srcdir}/fec/src/fec_hamming1511.c
+  ${srcdir}/fec/src/fec_hamming3126.c
+  ${srcdir}/fec/src/fec_hamming128_gentab.c
+  ${srcdir}/fec/src/fec_pass.c
+  ${srcdir}/fec/src/fec_rep3.c
+  ${srcdir}/fec/src/fec_rep5.c
+  ${srcdir}/fec/src/fec_rs.c
+  ${srcdir}/fec/src/fec_secded2216.c
+  ${srcdir}/fec/src/fec_secded3932.c
+  ${srcdir}/fec/src/fec_secded7264.c
+  ${srcdir}/fec/src/interleaver.c
+  ${srcdir}/fec/src/packetizer.c
+  ${srcdir}/fec/src/sumproduct.c
+  )
+set(fft_sources
+  ${srcdir}/fft/src/fftf.c
+  ${srcdir}/fft/src/spgramcf.c
+  ${srcdir}/fft/src/spgramf.c
+  ${srcdir}/fft/src/fft_utilities.c
+  )
+set(filter_sources
+  ${srcdir}/filter/src/bessel.c
+  ${srcdir}/filter/src/butter.c
+  ${srcdir}/filter/src/cheby1.c
+  ${srcdir}/filter/src/cheby2.c
+  ${srcdir}/filter/src/ellip.c
+  ${srcdir}/filter/src/filter_rrrf.c
+  ${srcdir}/filter/src/filter_crcf.c
+  ${srcdir}/filter/src/filter_cccf.c
+  ${srcdir}/filter/src/firdes.c
+  ${srcdir}/filter/src/firdespm.c
+  ${srcdir}/filter/src/fnyquist.c
+  ${srcdir}/filter/src/gmsk.c
+  ${srcdir}/filter/src/group_delay.c
+  ${srcdir}/filter/src/hM3.c
+  ${srcdir}/filter/src/iirdes.pll.c
+  ${srcdir}/filter/src/iirdes.c
+  ${srcdir}/filter/src/lpc.c
+  ${srcdir}/filter/src/rcos.c
+  ${srcdir}/filter/src/rkaiser.c
+  ${srcdir}/filter/src/rrcos.c
+  )
+set(framing_sources
+  ${srcdir}/framing/src/bpacketgen.c
+  ${srcdir}/framing/src/bpacketsync.c
+  ${srcdir}/framing/src/bpresync_cccf.c
+  ${srcdir}/framing/src/bsync_rrrf.c
+  ${srcdir}/framing/src/bsync_crcf.c
+  ${srcdir}/framing/src/bsync_cccf.c
+  ${srcdir}/framing/src/detector_cccf.c
+  ${srcdir}/framing/src/dsssframegen.c
+  ${srcdir}/framing/src/dsssframesync.c
+  ${srcdir}/framing/src/framedatastats.c
+  ${srcdir}/framing/src/framesyncstats.c
+  ${srcdir}/framing/src/framegen64.c
+  ${srcdir}/framing/src/framesync64.c
+  ${srcdir}/framing/src/flexframegen.c
+  ${srcdir}/framing/src/flexframesync.c
+  ${srcdir}/framing/src/fskframegen.c
+  ${srcdir}/framing/src/fskframesync.c
+  ${srcdir}/framing/src/gmskframegen.c
+  ${srcdir}/framing/src/gmskframesync.c
+  ${srcdir}/framing/src/msourcecf.c
+  ${srcdir}/framing/src/ofdmflexframegen.c
+  ${srcdir}/framing/src/ofdmflexframesync.c
+  ${srcdir}/framing/src/presync_cccf.c
+  ${srcdir}/framing/src/symstreamcf.c
+  ${srcdir}/framing/src/symtrack_cccf.c
+  ${srcdir}/framing/src/qdetector_cccf.c
+  ${srcdir}/framing/src/qpacketmodem.c
+  ${srcdir}/framing/src/qpilotgen.c
+  ${srcdir}/framing/src/qpilotsync.c
+  )
+set(math_sources
+  ${srcdir}/math/src/poly.c
+  ${srcdir}/math/src/polyc.c
+  ${srcdir}/math/src/polyf.c
+  ${srcdir}/math/src/polycf.c
+  ${srcdir}/math/src/math.c
+  ${srcdir}/math/src/math.bessel.c
+  ${srcdir}/math/src/math.gamma.c
+  ${srcdir}/math/src/math.complex.c
+  ${srcdir}/math/src/math.trig.c
+  ${srcdir}/math/src/modular_arithmetic.c
+  ${srcdir}/math/src/windows.c
+  )
+set(matrix_sources
+  ${srcdir}/matrix/src/matrix.c
+  ${srcdir}/matrix/src/matrixf.c
+  ${srcdir}/matrix/src/matrixc.c
+  ${srcdir}/matrix/src/matrixcf.c
+  ${srcdir}/matrix/src/smatrix.common.c
+  ${srcdir}/matrix/src/smatrixb.c
+  ${srcdir}/matrix/src/smatrixf.c
+  ${srcdir}/matrix/src/smatrixi.c
+  )
+set(modem_sources
+ ${srcdir}/modem/src/ampmodem.c
+  ${srcdir}/modem/src/cpfskdem.c
+  ${srcdir}/modem/src/cpfskmod.c
+  ${srcdir}/modem/src/fskdem.c
+  ${srcdir}/modem/src/fskmod.c
+  ${srcdir}/modem/src/gmskdem.c
+  ${srcdir}/modem/src/gmskmod.c
+  ${srcdir}/modem/src/modemf.c
+  ${srcdir}/modem/src/modem_utilities.c
+  ${srcdir}/modem/src/modem_apsk_const.c
+  ${srcdir}/modem/src/modem_arb_const.c
+  )
+set(multichannel_sources
+  ${srcdir}/multichannel/src/firpfbch_crcf.c
+  ${srcdir}/multichannel/src/firpfbch_cccf.c
+  ${srcdir}/multichannel/src/ofdmframe.common.c
+  ${srcdir}/multichannel/src/ofdmframegen.c
+  ${srcdir}/multichannel/src/ofdmframesync.c
+  )
+set(nco_sources
+  ${srcdir}/nco/src/nco_crcf.c
+  ${srcdir}/nco/src/nco.utilities.c
+  ${srcdir}/nco/src/synth_crcf.c
+  )
+set(optim_sources
+  ${srcdir}/optim/src/chromosome.c
+  ${srcdir}/optim/src/gasearch.c
+  ${srcdir}/optim/src/gradsearch.c
+  ${srcdir}/optim/src/optim.common.c
+  ${srcdir}/optim/src/qnsearch.c
+  ${srcdir}/optim/src/utilities.c
+  )
+set(quantization_sources
+  ${srcdir}/quantization/src/compand.c
+  ${srcdir}/quantization/src/quantizercf.c
+  ${srcdir}/quantization/src/quantizerf.c
+  ${srcdir}/quantization/src/quantizer.inline.c
+  )
+set(random_sources
+  ${srcdir}/random/src/rand.c
+  ${srcdir}/random/src/randn.c
+  ${srcdir}/random/src/randexp.c
+  ${srcdir}/random/src/randweib.c
+  ${srcdir}/random/src/randgamma.c
+  ${srcdir}/random/src/randnakm.c
+  ${srcdir}/random/src/randricek.c
+  ${srcdir}/random/src/scramble.c
+  )
+set(sequence_sources
+  ${srcdir}/sequence/src/bsequence.c
+  ${srcdir}/sequence/src/msequence.c
+  )
+set(utility_sources
+  ${srcdir}/utility/src/bshift_array.c
+  ${srcdir}/utility/src/byte_utilities.c
+  ${srcdir}/utility/src/msb_index.c
+  ${srcdir}/utility/src/pack_bytes.c
+  ${srcdir}/utility/src/shift_array.c
+  ${srcdir}/utility/src/utility.c
+  )
+set(vector_sources
+  ${srcdir}/vector/src/vectorf_add.port.c
+  ${srcdir}/vector/src/vectorf_norm.port.c
+  ${srcdir}/vector/src/vectorf_mul.port.c
+  ${srcdir}/vector/src/vectorf_trig.port.c
+  ${srcdir}/vector/src/vectorcf_add.port.c
+  ${srcdir}/vector/src/vectorcf_norm.port.c
+  ${srcdir}/vector/src/vectorcf_mul.port.c
+  ${srcdir}/vector/src/vectorcf_trig.port.c
+  )
+
+add_library(liquid STATIC
+  ${srcdir}/libliquid.c
+  ${agc_sources}
+  ${audio_sources}
+  ${buffer_sources}
+  ${channel_sources}
+  ${dotprod_sources}
+  ${equalization_sources}
+  ${fec_sources}
+  ${fft_sources}
+  ${filter_sources}
+  ${framing_sources}
+  ${math_sources}
+  ${matrix_sources}
+  ${modem_sources}
+  ${multichannel_sources}
+  ${nco_sources}
+  ${optim_sources}
+  ${quantization_sources}
+  ${random_sources}
+  ${sequence_sources}
+  ${utility_sources}
+  ${vector_sources}
+  )
+target_include_directories(liquid PUBLIC
+  generic_cpu
+  ../include
+  )
+
+if(TI_SDK_RTOS_OMAPL138C674X) # defined by toolchain file targeting OMAP-L183 DSP core from Texas Instruments RTOS SDK
+  target_compile_options(liquid PRIVATE
+    -O3
+    --diag_suppress=69
+    --diag_suppress=112
+    --diag_suppress=190
+    )
+  include(TI-CCS)
+else() # any other platform/cpu
+  target_compile_options(liquid PRIVATE -O2)
+endif()
